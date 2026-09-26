@@ -37,13 +37,12 @@ with st.sidebar:
     st.markdown("### 📋 Standar Klasifikasi")
     st.info("Menggunakan pedoman **UN Global E-Waste Monitor** untuk identifikasi bahaya dan daur ulang sampah elektronik.")
     st.markdown("---")
-    st.caption("v3.8 Final Pro — Strict JSON Engine")
+    st.caption("v3.9 Final Pro — Robust Raw Decoder")
 
 # ---------------------------------------------------------
 # 3. FUNGSI DETEKSI MODEL AKTIF & ANALISIS GAMBAR
 # ---------------------------------------------------------
 def get_available_gemini_models(key):
-    """Mencari nama model resmi yang aktif di server Google."""
     try:
         genai.configure(api_key=key)
         models = []
@@ -98,7 +97,6 @@ def analyze_ewaste_smart(image, key):
     last_error = ""
     used_model = ""
 
-    # Mengunci respon AI agar HANYA mengembalikan JSON murni
     gen_config = {"response_mime_type": "application/json"}
 
     for m_name in models_to_try:
@@ -110,7 +108,6 @@ def analyze_ewaste_smart(image, key):
                 used_model = m_name
                 break
         except Exception:
-            # Fallback tanpa config jika SDK lama
             try:
                 model = genai.GenerativeModel(m_name)
                 res = model.generate_content([prompt, image])
@@ -125,23 +122,23 @@ def analyze_ewaste_smart(image, key):
     if response is None:
         return None, None, f"Semua model gagal merespons. Detail error: {last_error}"
 
-    # Pembersihan & Ekstraksi JSON yang sangat ketat
+    # --- PEMOTONG DAN PEMBACA JSON TAHAN BANTING (RAW DECODER) ---
     try:
         raw_text = response.text.strip()
         
-        # Hapus penanda markdown code block jika ada
-        if raw_text.startswith("```"):
-            raw_text = re.sub(r"^```[a-zA-Z]*\n?", "", raw_text)
-            raw_text = re.sub(r"\n?```$", "", raw_text).strip()
-            
-        # Potong hanya objek JSON utama {...}
+        # Bersihkan format markdown block ```json ... ```
+        raw_text = re.sub(r"^```[a-zA-Z]*\n?", "", raw_text)
+        raw_text = re.sub(r"\n?```$", "", raw_text).strip()
+        
+        # Cari posisi tanda kurung pembuka '{' pertama
         start_idx = raw_text.find('{')
-        end_idx = raw_text.rfind('}')
-        if start_idx != -1 and end_idx != -1:
-            raw_text = raw_text[start_idx:end_idx+1]
-            
-        parsed_data = json.loads(raw_text)
-        return parsed_data, used_model, None
+        if start_idx != -1:
+            # raw_decode hanya membaca 1 objek JSON utuh dan mengabaikan semua teks tambahan di belakangnya
+            decoder = json.JSONDecoder()
+            parsed_data, _ = decoder.raw_decode(raw_text[start_idx:])
+            return parsed_data, used_model, None
+        else:
+            return None, used_model, "Respon AI tidak mengandung objek JSON."
             
     except Exception as e:
         return None, used_model, f"Gagal membaca format JSON: {str(e)}"
