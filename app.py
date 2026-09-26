@@ -37,7 +37,7 @@ with st.sidebar:
     st.markdown("### 📋 Standar Klasifikasi")
     st.info("Menggunakan pedoman **UN Global E-Waste Monitor** untuk identifikasi bahaya dan daur ulang sampah elektronik.")
     st.markdown("---")
-    st.caption("v3.7 Final Pro — Universal Model Discovery")
+    st.caption("v3.8 Final Pro — Strict JSON Engine")
 
 # ---------------------------------------------------------
 # 3. FUNGSI DETEKSI MODEL AKTIF & ANALISIS GAMBAR
@@ -49,21 +49,18 @@ def get_available_gemini_models(key):
         models = []
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
-                models.append(m.name)  # Menyimpan nama resmi berformat 'models/...'
+                models.append(m.name)
         if models:
             return models
     except Exception:
         pass
     
-    # Fallback nama resmi jika list_models tidak merespons
     return [
         "models/gemini-1.5-flash",
         "models/gemini-1.5-flash-latest",
         "models/gemini-1.5-pro",
         "models/gemini-2.0-flash",
-        "models/gemini-2.5-flash",
-        "gemini-1.5-flash",
-        "gemini-2.0-flash"
+        "models/gemini-2.5-flash"
     ]
 
 def analyze_ewaste_smart(image, key):
@@ -73,7 +70,7 @@ def analyze_ewaste_smart(image, key):
     Bertindaklah sebagai Ahli Pengolahan Sampah Elektronik (E-Waste Specialist) berstandar Internasional.
     Analisis gambar sampah elektronik ini dan berikan output STRICTLY dalam format JSON murni.
 
-    Gunakan format JSON berikut:
+    Gunakan struktur JSON berikut:
     {
         "nama_objek": "Nama spesifik perangkat/komponen elektronik pada gambar",
         "kategori_un": "Salah satu dari 6 Kategori UN E-Waste (1. Temperature Exchange Equipment, 2. Screens & Monitors, 3. Lamps, 4. Large Equipment, 5. Small Equipment, 6. Small IT & Telecommunication)",
@@ -95,40 +92,56 @@ def analyze_ewaste_smart(image, key):
     }
     """
     
-    # Ambil daftar model resmi
     models_to_try = get_available_gemini_models(key)
     
     response = None
     last_error = ""
     used_model = ""
 
-    # Coba memanggil setiap model hingga berhasil
+    # Mengunci respon AI agar HANYA mengembalikan JSON murni
+    gen_config = {"response_mime_type": "application/json"}
+
     for m_name in models_to_try:
         try:
-            model = genai.GenerativeModel(m_name)
+            model = genai.GenerativeModel(m_name, generation_config=gen_config)
             res = model.generate_content([prompt, image])
             if res and res.text:
                 response = res
                 used_model = m_name
                 break
-        except Exception as e:
-            last_error = str(e)
-            continue
+        except Exception:
+            # Fallback tanpa config jika SDK lama
+            try:
+                model = genai.GenerativeModel(m_name)
+                res = model.generate_content([prompt, image])
+                if res and res.text:
+                    response = res
+                    used_model = m_name
+                    break
+            except Exception as e:
+                last_error = str(e)
+                continue
 
     if response is None:
         return None, None, f"Semua model gagal merespons. Detail error: {last_error}"
 
-    # Ekstraksi data JSON secara aman
+    # Pembersihan & Ekstraksi JSON yang sangat ketat
     try:
-        raw_text = response.text
-        json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        raw_text = response.text.strip()
         
-        if json_match:
-            clean_json_str = json_match.group(0)
-            parsed_data = json.loads(clean_json_str)
-            return parsed_data, used_model, None
-        else:
-            return None, used_model, "Respon AI tidak mengandung format data JSON yang valid."
+        # Hapus penanda markdown code block jika ada
+        if raw_text.startswith("```"):
+            raw_text = re.sub(r"^```[a-zA-Z]*\n?", "", raw_text)
+            raw_text = re.sub(r"\n?```$", "", raw_text).strip()
+            
+        # Potong hanya objek JSON utama {...}
+        start_idx = raw_text.find('{')
+        end_idx = raw_text.rfind('}')
+        if start_idx != -1 and end_idx != -1:
+            raw_text = raw_text[start_idx:end_idx+1]
+            
+        parsed_data = json.loads(raw_text)
+        return parsed_data, used_model, None
             
     except Exception as e:
         return None, used_model, f"Gagal membaca format JSON: {str(e)}"
