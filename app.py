@@ -29,7 +29,7 @@ with st.sidebar:
     
     if "GEMINI_API_KEY" in st.secrets and st.secrets["GEMINI_API_KEY"]:
         api_key = st.secrets["GEMINI_API_KEY"]
-        st.success("🔑 API Key terdeteksi otomatis!")
+        st.success("🔑 API Key terdeteksi dari Streamlit Secrets!")
     else:
         api_key = st.text_input("Masukkan Gemini API Key:", type="password", help="Dapatkan dari Google AI Studio")
     
@@ -37,26 +37,50 @@ with st.sidebar:
     st.markdown("### 📋 Standar Klasifikasi")
     st.info("Menggunakan pedoman **UN Global E-Waste Monitor** untuk identifikasi bahaya dan daur ulang sampah elektronik.")
     st.markdown("---")
-    st.caption("v3.6 Pro — Robust JSON Parser")
+    st.caption("v3.7 Final Pro — Universal Model Discovery")
 
 # ---------------------------------------------------------
-# 3. FUNGSI ANALISIS GAMBAR (ROBUST PARSER & FAIL-SAFE)
+# 3. FUNGSI DETEKSI MODEL AKTIF & ANALISIS GAMBAR
 # ---------------------------------------------------------
+def get_available_gemini_models(key):
+    """Mencari nama model resmi yang aktif di server Google."""
+    try:
+        genai.configure(api_key=key)
+        models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                models.append(m.name)  # Menyimpan nama resmi berformat 'models/...'
+        if models:
+            return models
+    except Exception:
+        pass
+    
+    # Fallback nama resmi jika list_models tidak merespons
+    return [
+        "models/gemini-1.5-flash",
+        "models/gemini-1.5-flash-latest",
+        "models/gemini-1.5-pro",
+        "models/gemini-2.0-flash",
+        "models/gemini-2.5-flash",
+        "gemini-1.5-flash",
+        "gemini-2.0-flash"
+    ]
+
 def analyze_ewaste_smart(image, key):
     genai.configure(api_key=key)
     
     prompt = """
     Bertindaklah sebagai Ahli Pengolahan Sampah Elektronik (E-Waste Specialist) berstandar Internasional.
-    Analisis gambar sampah elektronik ini dan berikan output dalam format JSON murni.
+    Analisis gambar sampah elektronik ini dan berikan output STRICTLY dalam format JSON murni.
 
-    WAJIB Gunakan format JSON berikut tanpa teks pembuka atau penutup:
+    Gunakan format JSON berikut:
     {
-        "nama_objek": "Nama spesifik perangkat/komponen elektronik",
-        "kategori_un": "Salah satu dari 6 Kategori UN E-Waste",
+        "nama_objek": "Nama spesifik perangkat/komponen elektronik pada gambar",
+        "kategori_un": "Salah satu dari 6 Kategori UN E-Waste (1. Temperature Exchange Equipment, 2. Screens & Monitors, 3. Lamps, 4. Large Equipment, 5. Small Equipment, 6. Small IT & Telecommunication)",
         "deskripsi": "Deskripsi mendalam mengenai objek yang teridentifikasi",
         "tingkat_bahaya": "Tinggi / Sedang / Rendah",
         "skor_bahaya": 8,
-        "bahan_berbahaya": ["Bahan 1", "Bahan 2", "Bahan 3"],
+        "bahan_berbahaya": ["Contoh: Timbal", "Raksa", "Kadmium", "CFC/Freon"],
         "potensi_logam_mulia": {
             "Emas (Au)": "Ada / Tidak ada / Tinggi",
             "Perak (Ag)": "Ada / Tidak ada / Sedang",
@@ -71,25 +95,14 @@ def analyze_ewaste_smart(image, key):
     }
     """
     
-    # Ambil daftar model aktif
-    active_models = []
-    try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                active_models.append(m.name.replace("models/", ""))
-    except Exception:
-        pass
-
-    candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
-    models_to_try = [m for m in candidate_models if m in active_models]
-    for m in candidate_models:
-        if m not in models_to_try:
-            models_to_try.append(m)
-
+    # Ambil daftar model resmi
+    models_to_try = get_available_gemini_models(key)
+    
     response = None
     last_error = ""
     used_model = ""
 
+    # Coba memanggil setiap model hingga berhasil
     for m_name in models_to_try:
         try:
             model = genai.GenerativeModel(m_name)
@@ -105,7 +118,7 @@ def analyze_ewaste_smart(image, key):
     if response is None:
         return None, None, f"Semua model gagal merespons. Detail error: {last_error}"
 
-    # Ekstraksi string JSON secara presisi memakai Regex
+    # Ekstraksi data JSON secara aman
     try:
         raw_text = response.text
         json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
@@ -115,7 +128,7 @@ def analyze_ewaste_smart(image, key):
             parsed_data = json.loads(clean_json_str)
             return parsed_data, used_model, None
         else:
-            return None, used_model, f"Respon AI tidak mengandung JSON valid: {raw_text[:100]}"
+            return None, used_model, "Respon AI tidak mengandung format data JSON yang valid."
             
     except Exception as e:
         return None, used_model, f"Gagal membaca format JSON: {str(e)}"
@@ -155,11 +168,11 @@ with tab1:
         
         if 'analyze_btn' in locals() and analyze_btn:
             if not api_key:
-                st.error("⚠️ **API Key Belum Diisi!** Silakan isi Gemini API Key di menu sidebar sebelah kiri.")
+                st.error("⚠️ **API Key Belum Diisi!** Silakan masukkan Gemini API Key pada sidebar di sebelah kiri.")
             elif input_image is None:
                 st.warning("⚠️ **Gambar Belum Ada!** Ambil foto atau unggah gambar e-waste terlebih dahulu.")
             else:
-                with st.spinner("🧠 Menghubungkan ke Gemini AI & menganalisis e-waste..."):
+                with st.spinner("🧠 Menghubungkan ke Google Gemini AI & menganalisis e-waste..."):
                     data, active_model, err = analyze_ewaste_smart(input_image, api_key)
                     
                     if err:
@@ -220,6 +233,3 @@ with tab2:
             st.plotly_chart(fig_bar, use_container_width=True)
     else:
         st.info("Belum ada riwayat deteksi pada sesi ini. Lakukan deteksi di Tab 1 untuk melihat dashboard.")
-
-    
-    
